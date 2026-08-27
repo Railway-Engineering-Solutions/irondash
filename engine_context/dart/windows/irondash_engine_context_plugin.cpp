@@ -15,7 +15,11 @@ namespace irondash_engine_context {
 
 namespace {
 struct EngineContext {
+  // Null until a view exists. An engine run headless (Flutter's multi-window
+  // bootstrap) has no view when its plugins register, so this is resolved
+  // lazily by GetFlutterView instead of at registration time.
   HWND hwnd;
+  FlutterDesktopPluginRegistrarRef registrar;
   FlutterDesktopTextureRegistrarRef texture_registrar;
   FlutterDesktopMessengerRef binary_messenger;
 };
@@ -132,11 +136,20 @@ DWORD GetMainThreadId() { return main_thread_id; }
 
 size_t GetFlutterView(int64_t engine_handle) {
   auto context = contexts.find(engine_handle);
-  if (context != contexts.end()) {
-    return reinterpret_cast<size_t>(context->second.hwnd);
-  } else {
+  if (context == contexts.end()) {
     return 0;
   }
+  auto &engine = context->second;
+  if (engine.hwnd == nullptr && engine.registrar != nullptr) {
+    // The engine had no view when it registered. Views are numbered from
+    // kImplicitViewId, so the first one created - by the runner or later by
+    // Dart - is the one this lookup resolves. Cache it once it exists.
+    auto *view = FlutterDesktopPluginRegistrarGetView(engine.registrar);
+    if (view != nullptr) {
+      engine.hwnd = FlutterDesktopViewGetHWND(view);
+    }
+  }
+  return reinterpret_cast<size_t>(engine.hwnd);
 }
 
 FlutterDesktopTextureRegistrarRef GetTextureRegistrar(int64_t engine_handle) {
@@ -170,7 +183,11 @@ void IrondashEngineContextPlugin::RegisterWithRegistrar(
   ++next_handle;
 
   EngineContext context;
-  context.hwnd = registrar->GetView()->GetNativeWindow();
+  // registrar->GetView() is null on an engine running without a view; keeping
+  // the registrar lets GetFlutterView pick the window up once one exists.
+  auto *view = registrar->GetView();
+  context.hwnd = view != nullptr ? view->GetNativeWindow() : nullptr;
+  context.registrar = raw_registrar;
   context.texture_registrar =
       FlutterDesktopRegistrarGetTextureRegistrar(raw_registrar);
   context.binary_messenger =
