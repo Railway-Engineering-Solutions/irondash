@@ -4,7 +4,12 @@
 
 @interface _IrondashEngineContext : NSObject {
 @public
+  // Nil until a view exists. An engine run headless (Flutter's multi-window
+  // bootstrap) has no view when its plugins register, so this is resolved
+  // lazily by +getFlutterView: instead of at registration time.
   __weak NSView *flutterView;
+@public
+  __weak NSObject<FlutterPluginRegistrar> *registrar;
 @public
   __weak id<FlutterBinaryMessenger> binaryMessenger;
 @public
@@ -65,7 +70,10 @@ static char associatedObjectKey;
   // Flutter plugin architecture on macOS;
   dispatch_async(dispatch_get_main_queue(), ^{
     _IrondashEngineContext *context = [_IrondashEngineContext new];
+    // registrar.view is still nil on an engine running without a view; keeping
+    // the registrar lets +getFlutterView: pick the view up once one exists.
     context->flutterView = registrar.view;
+    context->registrar = registrar;
     context->binaryMessenger = registrar.messenger;
     context->textureRegistry = registrar.textures;
     // There is no unregister callback on macOS, which means we'll leak
@@ -92,17 +100,27 @@ static char associatedObjectKey;
 
 + (NSView *)getFlutterView:(int64_t)engineHandle {
   _IrondashEngineContext *context = [registry objectForKey:@(engineHandle)];
+  if (context == nil) {
+    return nil;
+  }
+  if (context->flutterView == nil) {
+    // The engine had no view when it registered. FlutterPluginRegistrar.view
+    // reads the engine's implicit view controller, so this resolves as soon as
+    // one is attached - by the runner or later by Dart. Cache it once it
+    // exists.
+    context->flutterView = context->registrar.view;
+  }
   return context->flutterView;
 }
 
 + (id<FlutterTextureRegistry>)getTextureRegistry:(int64_t)engineHandle {
   _IrondashEngineContext *context = [registry objectForKey:@(engineHandle)];
-  return context->textureRegistry;
+  return context != nil ? context->textureRegistry : nil;
 }
 
 + (id<FlutterBinaryMessenger>)getBinaryMessenger:(int64_t)engineHandle {
   _IrondashEngineContext *context = [registry objectForKey:@(engineHandle)];
-  return context->binaryMessenger;
+  return context != nil ? context->binaryMessenger : nil;
 }
 
 + (void)registerEngineDestroyedCallback:(EngineDestroyedCallback)callback {
