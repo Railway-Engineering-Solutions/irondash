@@ -104,13 +104,53 @@ static char associatedObjectKey;
     return nil;
   }
   if (context->flutterView == nil) {
-    // The engine had no view when it registered. FlutterPluginRegistrar.view
-    // reads the engine's implicit view controller, so this resolves as soon as
-    // one is attached - by the runner or later by Dart. Cache it once it
-    // exists.
-    context->flutterView = context->registrar.view;
+    // The engine had no view when it registered.
+    context->flutterView = [self resolveViewForContext:context];
   }
   return context->flutterView;
+}
+
+// Finds a view for an engine that had none at registration time.
+//
+// FlutterPluginRegistrar.view reads the engine's *implicit* view controller.
+// An engine running Flutter's multi-window bootstrap never has one - Dart
+// creates every window, each with its own already-attached
+// FlutterViewController, and promoting one of those to the implicit view
+// throws - so that property stays nil for the life of the process. Ask AppKit
+// instead, preferring the window the user is driving.
+//
+// The result is cached in a __weak field, so closing that window drops it and
+// the next call resolves a live one.
++ (NSView *)resolveViewForContext:(_IrondashEngineContext *)context {
+  NSView *view = context->registrar.view;
+  if (view != nil) {
+    return view;
+  }
+
+  NSMutableArray<NSWindow *> *windows = [NSMutableArray array];
+  NSWindow *keyWindow = NSApp.keyWindow;
+  if (keyWindow != nil) {
+    [windows addObject:keyWindow];
+  }
+  [windows addObjectsFromArray:NSApp.orderedWindows];
+
+  id<FlutterBinaryMessenger> messenger = context->binaryMessenger;
+  for (NSWindow *window in windows) {
+    NSViewController *controller = window.contentViewController;
+    if (![controller isKindOfClass:[FlutterViewController class]]) {
+      continue;
+    }
+    // Only claim a window belonging to this engine. One engine per process is
+    // the common case, but the registry is keyed per engine and must stay so.
+    FlutterViewController *flutterController = (FlutterViewController *)controller;
+    if (messenger != nil && flutterController.engine.binaryMessenger != messenger) {
+      continue;
+    }
+    // FlutterViewController.view is a wrapper; its first child is the
+    // FlutterView, which is what registrar.view would have returned.
+    return flutterController.view.subviews.firstObject ?: flutterController.view;
+  }
+  return nil;
 }
 
 + (id<FlutterTextureRegistry>)getTextureRegistry:(int64_t)engineHandle {
