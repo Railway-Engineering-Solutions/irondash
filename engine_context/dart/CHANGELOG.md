@@ -1,3 +1,11 @@
+## Unreleased (RES fork)
+
+- Require code_assets ^2.0.0, hooks ^2.2.0 and native_toolchain_rust ^1.0.7, so
+  dependents can resolve objective_c 9.6 and the rest of the code_assets 2
+  graph. The build hook only uses `buildCodeAssets`, `code.targetOS` and
+  `OS.android`, which are unchanged in 2.x.
+- flutter_lints ^6.0.0. Verified on Flutter 3.50.0 / Dart 3.14.0.
+
 ## 0.6.0-dev.0
 
 - Prepare next minor prerelease.
